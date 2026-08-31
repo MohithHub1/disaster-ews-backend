@@ -50,9 +50,6 @@ def create_assessment(
         slope=assessment.slope,
         historical_disaster=assessment.historical_disaster,
     )
-@app.get("/assessments")
-def get_assessments(db: Session = Depends(get_db)):
-    return db.query(Assessment).order_by(Assessment.id.desc()).all()
 
     db.add(new_assessment)
     db.commit()
@@ -62,3 +59,8 @@ def get_assessments(db: Session = Depends(get_db)):
         "message": "Assessment stored successfully",
         "id": new_assessment.id,
     }
+
+
+@app.get("/assessments")
+def get_assessments(db: Session = Depends(get_db)):
+    return db.query(Assessment).order_by(Assessment.id.desc()).all()
