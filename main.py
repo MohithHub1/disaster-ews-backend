@@ -5,9 +5,32 @@ from database import Base, engine, SessionLocal
 from models import Assessment
 from schemas import AssessmentCreate
 from fastapi.middleware.cors import CORSMiddleware
-
+from sqlalchemy import text
 # Create database tables
 Base.metadata.create_all(bind=engine)
+
+# Add new assessment columns to existing databases
+with engine.connect() as conn:
+    columns = {
+        "risk_level": "VARCHAR",
+        "overall_risk": "FLOAT",
+        "flood_risk": "FLOAT",
+        "landslide_risk": "FLOAT",
+        "lead_time_minutes": "INTEGER",
+        "recommended_action": "VARCHAR",
+    }
+
+    for column, column_type in columns.items():
+        try:
+            conn.execute(
+                text(
+                    f"ALTER TABLE assessments "
+                    f"ADD COLUMN {column} {column_type}"
+                )
+            )
+            conn.commit()
+        except Exception:
+            pass
 
 app = FastAPI(title="Disaster Early Warning System")
 app.add_middleware(
