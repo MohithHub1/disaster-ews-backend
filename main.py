@@ -42,6 +42,12 @@ def create_assessment(
     new_assessment = Assessment(
         location=assessment.location,
         rainfall=assessment.rainfall,
+        risk_level=assessment.risk_level,
+        overall_risk=assessment.overall_risk,
+        flood_risk=assessment.flood_risk,
+        landslide_risk=assessment.landslide_risk,
+        lead_time_minutes=assessment.lead_time_minutes,
+        recommended_action=assessment.recommended_action,
         soil_moisture=assessment.soil_moisture,
         water_level=assessment.water_level,
         temperature=assessment.temperature,

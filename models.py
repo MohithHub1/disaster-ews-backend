@@ -10,6 +10,12 @@ class Assessment(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     location = Column(String, nullable=False)
+    risk_level = Column(String, nullable=True)
+    overall_risk = Column(Float, nullable=True)
+    flood_risk = Column(Float, nullable=True)
+    landslide_risk = Column(Float, nullable=True)
+    lead_time_minutes = Column(Integer, nullable=True)
+    recommended_action = Column(String, nullable=True)
 
     rainfall = Column(Float, nullable=False)
     soil_moisture = Column(Float, nullable=False)
