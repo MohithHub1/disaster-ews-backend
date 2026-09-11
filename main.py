@@ -1,18 +1,28 @@
 import json
 import urllib.parse
 import urllib.request
+
 from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from database import Base, engine, SessionLocal
 from models import Assessment
 from schemas import AssessmentCreate
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
-# Create database tables
+
+
+# ============================================================
+# CREATE DATABASE TABLES
+# ============================================================
+
 Base.metadata.create_all(bind=engine)
 
-# Add new assessment columns to existing databases
+
+# ============================================================
+# ADD NEW ASSESSMENT COLUMNS TO EXISTING DATABASES
+# ============================================================
+
 with engine.connect() as conn:
     columns = {
         "risk_level": "VARCHAR",
@@ -35,7 +45,20 @@ with engine.connect() as conn:
         except Exception:
             pass
 
-app = FastAPI(title="Disaster Early Warning System")
+
+# ============================================================
+# FASTAPI APP
+# ============================================================
+
+app = FastAPI(
+    title="Disaster Early Warning System"
+)
+
+
+# ============================================================
+# CORS
+# ============================================================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,13 +68,22 @@ app.add_middleware(
 )
 
 
+# ============================================================
+# DATABASE SESSION
+# ============================================================
+
 def get_db():
     db = SessionLocal()
+
     try:
         yield db
     finally:
         db.close()
 
+
+# ============================================================
+# ROOT
+# ============================================================
 
 @app.get("/")
 def root():
@@ -59,6 +91,10 @@ def root():
         "message": "Disaster EWS backend is running"
     }
 
+
+# ============================================================
+# CREATE ASSESSMENT
+# ============================================================
 
 @app.post("/assessments")
 def create_assessment(
@@ -93,9 +129,25 @@ def create_assessment(
     }
 
 
+# ============================================================
+# GET ASSESSMENTS
+# ============================================================
+
 @app.get("/assessments")
-def get_assessments(db: Session = Depends(get_db)):
-    return db.query(Assessment).order_by(Assessment.id.desc()).all()
+def get_assessments(
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(Assessment)
+        .order_by(Assessment.id.desc())
+        .all()
+    )
+
+
+# ============================================================
+# GET NEARBY REAL-WORLD SHELTERS
+# ============================================================
+
 @app.get("/shelters")
 def get_shelters(
     lat: float,
@@ -103,24 +155,29 @@ def get_shelters(
     radius: int = 25000,
 ):
     """
-    Get nearby real-world emergency shelters from OpenStreetMap.
+    Get nearby emergency shelters from OpenStreetMap.
 
-    lat     = user's latitude
-    lon     = user's longitude
-    radius  = search radius in metres
+    lat    = user's latitude
+    lon    = user's longitude
+    radius = search radius in metres
     """
 
-    # OpenStreetMap Overpass query.
-    #
-    # We intentionally prioritize actual emergency/shelter tags
-    # instead of ordinary bus shelters.
+    # --------------------------------------------------------
+    # OPENSTREETMAP OVERPASS QUERY
+    # --------------------------------------------------------
+
     query = f"""
     [out:json][timeout:25];
 
     (
-      nwr["emergency:social_facility"="shelter"](around:{radius},{lat},{lon});
-      nwr["social_facility"="shelter"](around:{radius},{lat},{lon});
-      nwr["evacuation_center"="yes"](around:{radius},{lat},{lon});
+      nwr["emergency:social_facility"="shelter"]
+        (around:{radius},{lat},{lon});
+
+      nwr["social_facility"="shelter"]
+        (around:{radius},{lat},{lon});
+
+      nwr["evacuation_center"="yes"]
+        (around:{radius},{lat},{lon});
     );
 
     out center tags;
@@ -130,79 +187,120 @@ def get_shelters(
         {"data": query}
     ).encode("utf-8")
 
+
+    # --------------------------------------------------------
+    # OVERPASS SERVERS
+    # --------------------------------------------------------
+
     urls = [
-    "https://overpass.private.coffee/api/interpreter",
-    "https://overpass-api.de/api/interpreter",
-]
+        "https://overpass.private.coffee/api/interpreter",
+        "https://overpass-api.de/api/interpreter",
+    ]
 
-    request = urllib.request.Request(
-        url,
-        data=encoded_query,
-        headers={
-            "User-Agent": "DisasterEWS/1.0",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        method="POST",
-    )
 
-     last_error = None
-data = None
+    # --------------------------------------------------------
+    # TRY OVERPASS SERVERS
+    # --------------------------------------------------------
 
-for url in urls:
-    try:
-        request = urllib.request.Request(
-            url,
-            data=encoded_query,
-            headers={
-                "User-Agent": "DisasterEWS/1.0",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            method="POST",
-        )
+    last_error = None
+    data = None
 
-        with urllib.request.urlopen(
-            request,
-            timeout=30,
-        ) as response:
-            data = json.loads(
-                response.read().decode("utf-8")
+    for url in urls:
+
+        try:
+            request = urllib.request.Request(
+                url,
+                data=encoded_query,
+                headers={
+                    "User-Agent": "DisasterEWS/1.0",
+                    "Content-Type": (
+                        "application/x-www-form-urlencoded"
+                    ),
+                },
+                method="POST",
             )
 
-        break
+            with urllib.request.urlopen(
+                request,
+                timeout=30,
+            ) as response:
 
-    except Exception as e:
-        last_error = str(e)
+                data = json.loads(
+                    response.read().decode("utf-8")
+                )
 
-if data is None:
-    return {
-        "success": False,
-        "error": last_error or "All shelter providers failed",
-        "shelters": [],
-    }
+            # Successful request
+            break
+
+        except Exception as e:
+            last_error = str(e)
+
+
+    # --------------------------------------------------------
+    # IF ALL SERVERS FAILED
+    # --------------------------------------------------------
+
+    if data is None:
+        return {
+            "success": False,
+            "error": (
+                last_error
+                or "All shelter providers failed"
+            ),
+            "shelters": [],
+        }
+
+
+    # --------------------------------------------------------
+    # PROCESS SHELTERS
+    # --------------------------------------------------------
 
     shelters = []
 
     for element in data.get("elements", []):
+
         tags = element.get("tags", {})
 
-        # Nodes have lat/lon directly.
+
+        # ----------------------------------------------------
+        # GET COORDINATES
+        # ----------------------------------------------------
+
         latitude = element.get("lat")
         longitude = element.get("lon")
 
-        # Ways/relations normally provide a center.
+
+        # Ways / relations use center coordinates
         if latitude is None or longitude is None:
-            center = element.get("center", {})
+
+            center = element.get(
+                "center",
+                {}
+            )
+
             latitude = center.get("lat")
             longitude = center.get("lon")
 
+
+        # Skip invalid locations
         if latitude is None or longitude is None:
             continue
+
+
+        # ----------------------------------------------------
+        # SHELTER NAME
+        # ----------------------------------------------------
 
         name = (
             tags.get("name")
             or tags.get("name:en")
             or "Emergency Shelter"
         )
+
+
+        # ----------------------------------------------------
+        # ADDRESS
+        # ----------------------------------------------------
 
         address_parts = [
             tags.get("addr:housenumber"),
@@ -211,27 +309,65 @@ if data is None:
         ]
 
         address = ", ".join(
-            part for part in address_parts if part
+            part
+            for part in address_parts
+            if part
         )
 
-        shelters.append({
-            "id": f"osm_{element.get('type')}_{element.get('id')}",
-            "name": name,
-            "location": address or "OpenStreetMap location",
-            "latitude": float(latitude),
-            "longitude": float(longitude),
-            "capacity": _safe_int(
-                tags.get("capacity"),
-                0,
-            ),
-            "isHighGround": False,
-            "source": "OpenStreetMap",
-            "osmType": element.get("type"),
-            "osmId": element.get("id"),
-            "operator": tags.get("operator"),
-            "phone": tags.get("phone"),
-            "website": tags.get("website"),
-        })
+
+        # ----------------------------------------------------
+        # ADD SHELTER
+        # ----------------------------------------------------
+
+        shelters.append(
+            {
+                "id": (
+                    f"osm_{element.get('type')}_"
+                    f"{element.get('id')}"
+                ),
+
+                "name": name,
+
+                "location": (
+                    address
+                    or "OpenStreetMap location"
+                ),
+
+                "latitude": float(latitude),
+
+                "longitude": float(longitude),
+
+                "capacity": _safe_int(
+                    tags.get("capacity"),
+                    0,
+                ),
+
+                "isHighGround": False,
+
+                "source": "OpenStreetMap",
+
+                "osmType": element.get("type"),
+
+                "osmId": element.get("id"),
+
+                "operator": tags.get(
+                    "operator"
+                ),
+
+                "phone": tags.get(
+                    "phone"
+                ),
+
+                "website": tags.get(
+                    "website"
+                ),
+            }
+        )
+
+
+    # --------------------------------------------------------
+    # RETURN RESULT
+    # --------------------------------------------------------
 
     return {
         "success": True,
@@ -241,8 +377,16 @@ if data is None:
     }
 
 
-def _safe_int(value, default=0):
+# ============================================================
+# SAFE INTEGER CONVERSION
+# ============================================================
+
+def _safe_int(
+    value,
+    default=0,
+):
     try:
         return int(value)
+
     except (TypeError, ValueError):
         return default
