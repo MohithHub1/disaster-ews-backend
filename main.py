@@ -240,9 +240,10 @@ def get_shelters(
     ).encode("utf-8")
 
     urls = [
-        "https://overpass.private.coffee/api/interpreter",
-        "https://z.overpass-api.de/api/interpreter",
-    ]
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
+]
 
     last_error = None
     data = None
