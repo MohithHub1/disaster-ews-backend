@@ -1,6 +1,9 @@
 import json
 import urllib.parse
 import urllib.request
+import http.client
+import socket
+import ssl
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -128,26 +131,83 @@ def create_assessment(
         "id": new_assessment.id,
     }
 
+def _overpass_post_ipv4(
+    url: str,
+    encoded_query: bytes,
+):
+    parsed = urllib.parse.urlparse(url)
 
+    host = parsed.hostname
+    port = parsed.port or 443
+
+    if host is None:
+        raise ValueError("Invalid Overpass URL")
+
+    addresses = socket.getaddrinfo(
+        host,
+        port,
+        socket.AF_INET,
+        socket.SOCK_STREAM,
+    )
+
+    if not addresses:
+        raise OSError(
+            f"No IPv4 address found for {host}"
+        )
+
+    ipv4_address = addresses[0][4][0]
+
+    context = ssl.create_default_context()
+
+    raw_socket = socket.create_connection(
+        (ipv4_address, port),
+        timeout=30,
+    )
+
+    ssl_socket = context.wrap_socket(
+        raw_socket,
+        server_hostname=host,
+    )
+
+    connection = http.client.HTTPSConnection(
+        host,
+        port,
+        timeout=30,
+    )
+
+    connection.sock = ssl_socket
+
+    try:
+        connection.request(
+            "POST",
+            parsed.path or "/api/interpreter",
+            body=encoded_query,
+            headers={
+                "User-Agent": "DisasterEWS/1.0",
+                "Content-Type": (
+                    "application/x-www-form-urlencoded"
+                ),
+            },
+        )
+
+        response = connection.getresponse()
+        response_body = response.read()
+
+        if response.status < 200 or response.status >= 300:
+            raise RuntimeError(
+                f"Overpass HTTP {response.status}: "
+                f"{response_body[:500].decode('utf-8', errors='replace')}"
+            )
+
+        return json.loads(
+            response_body.decode("utf-8")
+        )
+
+    finally:
+        connection.close()
 # ============================================================
 # GET ASSESSMENTS
 # ============================================================
-
-@app.get("/assessments")
-def get_assessments(
-    db: Session = Depends(get_db),
-):
-    return (
-        db.query(Assessment)
-        .order_by(Assessment.id.desc())
-        .all()
-    )
-
-
-# ============================================================
-# GET NEARBY REAL-WORLD SHELTERS
-# ============================================================
-
 @app.get("/shelters")
 def get_shelters(
     lat: float,
@@ -156,15 +216,7 @@ def get_shelters(
 ):
     """
     Get nearby emergency shelters from OpenStreetMap.
-
-    lat    = user's latitude
-    lon    = user's longitude
-    radius = search radius in metres
     """
-
-    # --------------------------------------------------------
-    # OPENSTREETMAP OVERPASS QUERY
-    # --------------------------------------------------------
 
     query = f"""
     [out:json][timeout:25];
@@ -187,58 +239,24 @@ def get_shelters(
         {"data": query}
     ).encode("utf-8")
 
-
-    # --------------------------------------------------------
-    # OVERPASS SERVERS
-    # --------------------------------------------------------
-
     urls = [
         "https://overpass.private.coffee/api/interpreter",
-        "https://overpass-api.de/api/interpreter",
+        "https://z.overpass-api.de/api/interpreter",
     ]
-
-
-    # --------------------------------------------------------
-    # TRY OVERPASS SERVERS
-    # --------------------------------------------------------
 
     last_error = None
     data = None
 
     for url in urls:
-
         try:
-            request = urllib.request.Request(
+            data = _overpass_post_ipv4(
                 url,
-                data=encoded_query,
-                headers={
-                    "User-Agent": "DisasterEWS/1.0",
-                    "Content-Type": (
-                        "application/x-www-form-urlencoded"
-                    ),
-                },
-                method="POST",
+                encoded_query,
             )
-
-            with urllib.request.urlopen(
-                request,
-                timeout=30,
-            ) as response:
-
-                data = json.loads(
-                    response.read().decode("utf-8")
-                )
-
-            # Successful request
             break
 
         except Exception as e:
             last_error = str(e)
-
-
-    # --------------------------------------------------------
-    # IF ALL SERVERS FAILED
-    # --------------------------------------------------------
 
     if data is None:
         return {
@@ -250,57 +268,27 @@ def get_shelters(
             "shelters": [],
         }
 
-
-    # --------------------------------------------------------
-    # PROCESS SHELTERS
-    # --------------------------------------------------------
-
     shelters = []
 
     for element in data.get("elements", []):
-
         tags = element.get("tags", {})
-
-
-        # ----------------------------------------------------
-        # GET COORDINATES
-        # ----------------------------------------------------
 
         latitude = element.get("lat")
         longitude = element.get("lon")
 
-
-        # Ways / relations use center coordinates
         if latitude is None or longitude is None:
-
-            center = element.get(
-                "center",
-                {}
-            )
-
+            center = element.get("center", {})
             latitude = center.get("lat")
             longitude = center.get("lon")
 
-
-        # Skip invalid locations
         if latitude is None or longitude is None:
             continue
-
-
-        # ----------------------------------------------------
-        # SHELTER NAME
-        # ----------------------------------------------------
 
         name = (
             tags.get("name")
             or tags.get("name:en")
             or "Emergency Shelter"
         )
-
-
-        # ----------------------------------------------------
-        # ADDRESS
-        # ----------------------------------------------------
 
         address_parts = [
             tags.get("addr:housenumber"),
@@ -314,60 +302,32 @@ def get_shelters(
             if part
         )
 
-
-        # ----------------------------------------------------
-        # ADD SHELTER
-        # ----------------------------------------------------
-
         shelters.append(
             {
                 "id": (
                     f"osm_{element.get('type')}_"
                     f"{element.get('id')}"
                 ),
-
                 "name": name,
-
                 "location": (
                     address
                     or "OpenStreetMap location"
                 ),
-
                 "latitude": float(latitude),
-
                 "longitude": float(longitude),
-
                 "capacity": _safe_int(
                     tags.get("capacity"),
                     0,
                 ),
-
                 "isHighGround": False,
-
                 "source": "OpenStreetMap",
-
                 "osmType": element.get("type"),
-
                 "osmId": element.get("id"),
-
-                "operator": tags.get(
-                    "operator"
-                ),
-
-                "phone": tags.get(
-                    "phone"
-                ),
-
-                "website": tags.get(
-                    "website"
-                ),
+                "operator": tags.get("operator"),
+                "phone": tags.get("phone"),
+                "website": tags.get("website"),
             }
         )
-
-
-    # --------------------------------------------------------
-    # RETURN RESULT
-    # --------------------------------------------------------
 
     return {
         "success": True,
@@ -377,9 +337,14 @@ def get_shelters(
     }
 
 
-# ============================================================
-# SAFE INTEGER CONVERSION
-# ============================================================
+def _safe_int(
+    value,
+    default=0,
+):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 def _safe_int(
     value,
