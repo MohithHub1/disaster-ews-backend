@@ -1,3 +1,6 @@
+import json
+import urllib.parse
+import urllib.request
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
 
@@ -93,3 +96,126 @@ def create_assessment(
 @app.get("/assessments")
 def get_assessments(db: Session = Depends(get_db)):
     return db.query(Assessment).order_by(Assessment.id.desc()).all()
+@app.get("/shelters")
+def get_shelters(
+    lat: float,
+    lon: float,
+    radius: int = 25000,
+):
+    """
+    Get nearby real-world emergency shelters from OpenStreetMap.
+
+    lat     = user's latitude
+    lon     = user's longitude
+    radius  = search radius in metres
+    """
+
+    # OpenStreetMap Overpass query.
+    #
+    # We intentionally prioritize actual emergency/shelter tags
+    # instead of ordinary bus shelters.
+    query = f"""
+    [out:json][timeout:25];
+
+    (
+      nwr["emergency:social_facility"="shelter"](around:{radius},{lat},{lon});
+      nwr["social_facility"="shelter"](around:{radius},{lat},{lon});
+      nwr["evacuation_center"="yes"](around:{radius},{lat},{lon});
+    );
+
+    out center tags;
+    """
+
+    encoded_query = urllib.parse.urlencode(
+        {"data": query}
+    ).encode("utf-8")
+
+    url = "https://overpass-api.de/api/interpreter"
+
+    request = urllib.request.Request(
+        url,
+        data=encoded_query,
+        headers={
+            "User-Agent": "DisasterEWS/1.0",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "shelters": [],
+        }
+
+    shelters = []
+
+    for element in data.get("elements", []):
+        tags = element.get("tags", {})
+
+        # Nodes have lat/lon directly.
+        latitude = element.get("lat")
+        longitude = element.get("lon")
+
+        # Ways/relations normally provide a center.
+        if latitude is None or longitude is None:
+            center = element.get("center", {})
+            latitude = center.get("lat")
+            longitude = center.get("lon")
+
+        if latitude is None or longitude is None:
+            continue
+
+        name = (
+            tags.get("name")
+            or tags.get("name:en")
+            or "Emergency Shelter"
+        )
+
+        address_parts = [
+            tags.get("addr:housenumber"),
+            tags.get("addr:street"),
+            tags.get("addr:city"),
+        ]
+
+        address = ", ".join(
+            part for part in address_parts if part
+        )
+
+        shelters.append({
+            "id": f"osm_{element.get('type')}_{element.get('id')}",
+            "name": name,
+            "location": address or "OpenStreetMap location",
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "capacity": _safe_int(
+                tags.get("capacity"),
+                0,
+            ),
+            "isHighGround": False,
+            "source": "OpenStreetMap",
+            "osmType": element.get("type"),
+            "osmId": element.get("id"),
+            "operator": tags.get("operator"),
+            "phone": tags.get("phone"),
+            "website": tags.get("website"),
+        })
+
+    return {
+        "success": True,
+        "count": len(shelters),
+        "radius": radius,
+        "shelters": shelters,
+    }
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
