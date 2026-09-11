@@ -130,7 +130,10 @@ def get_shelters(
         {"data": query}
     ).encode("utf-8")
 
-    url = "https://overpass-api.de/api/interpreter"
+    urls = [
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+]
 
     request = urllib.request.Request(
         url,
@@ -142,16 +145,40 @@ def get_shelters(
         method="POST",
     )
 
+     last_error = None
+data = None
+
+for url in urls:
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        request = urllib.request.Request(
+            url,
+            data=encoded_query,
+            headers={
+                "User-Agent": "DisasterEWS/1.0",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(
+            request,
+            timeout=30,
+        ) as response:
+            data = json.loads(
+                response.read().decode("utf-8")
+            )
+
+        break
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "shelters": [],
-        }
+        last_error = str(e)
+
+if data is None:
+    return {
+        "success": False,
+        "error": last_error or "All shelter providers failed",
+        "shelters": [],
+    }
 
     shelters = []
 
