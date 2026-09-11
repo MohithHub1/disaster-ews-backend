@@ -208,28 +208,72 @@ def _overpass_post_ipv4(
 # ============================================================
 # GET ASSESSMENTS
 # ============================================================
+
 @app.get("/shelters")
 def get_shelters(
     lat: float,
     lon: float,
-    radius: int = 25000,
+    radius: int = 50000,
 ):
     """
-    Get nearby emergency shelters from OpenStreetMap.
+    Find emergency shelters / evacuation points near a location.
+
+    Sources:
+    - OSM designated shelters
+    - OSM emergency assembly points
+    - OSM disaster help points
+    - OSM evacuation centres
+
+    Designed for India-wide operation.
     """
 
     query = f"""
-    [out:json][timeout:25];
+    [out:json][timeout:60];
 
     (
-      nwr["emergency:social_facility"="shelter"]
-        (around:{radius},{lat},{lon});
+      /*
+       * Official/designated emergency shelters
+       */
+      nwr[
+        "emergency:social_facility"="shelter"
+      ](around:{radius},{lat},{lon});
 
-      nwr["social_facility"="shelter"]
-        (around:{radius},{lat},{lon});
+      nwr[
+        "social_facility"="shelter"
+      ](around:{radius},{lat},{lon});
 
-      nwr["evacuation_center"="yes"]
-        (around:{radius},{lat},{lon});
+      nwr[
+        "emergency:shelter"="yes"
+      ](around:{radius},{lat},{lon});
+
+      nwr[
+        "evacuation_center"="yes"
+      ](around:{radius},{lat},{lon});
+
+      /*
+       * Emergency assembly locations
+       */
+      nwr[
+        "emergency"="assembly_point"
+      ](around:{radius},{lat},{lon});
+
+      /*
+       * Disaster help points
+       */
+      nwr[
+        "emergency"="disaster_help_point"
+      ](around:{radius},{lat},{lon});
+
+      /*
+       * General mapped shelters
+       *
+       * Public transport shelters are excluded.
+       */
+      nwr[
+        "amenity"="shelter"
+      ](
+        around:{radius},{lat},{lon}
+      )["shelter_type"!="public_transport"];
     );
 
     out center tags;
@@ -240,10 +284,10 @@ def get_shelters(
     ).encode("utf-8")
 
     urls = [
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
-    "https://z.overpass-api.de/api/interpreter",
-]
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+        "https://z.overpass-api.de/api/interpreter",
+    ]
 
     last_error = None
     data = None
@@ -255,24 +299,246 @@ def get_shelters(
                 encoded_query,
             )
             break
-
         except Exception as e:
             last_error = str(e)
 
     if data is None:
         return {
             "success": False,
-            "error": (
-                last_error
-                or "All shelter providers failed"
-            ),
+            "error": last_error or "All shelter providers failed",
             "shelters": [],
         }
 
     shelters = []
+    seen_ids = set()
 
     for element in data.get("elements", []):
         tags = element.get("tags", {})
+
+        element_id = (
+            f"{element.get('type')}_{element.get('id')}"
+        )
+
+        if element_id in seen_ids:
+            continue
+
+        seen_ids.add(element_id)
+
+        latitude = element.get("lat")
+        longitude = element.get("lon")
+
+        if latitude is None or longitude is None:
+            center = element.get("center", {})
+
+            latitude = center.get("lat")
+            longitude = center.get("lon")
+
+        if latitude is None or longitude is None:
+            continue
+
+        # -----------------------------------------
+        # Determine emergency classification
+        # -----------------------------------------
+
+        if (
+            tags.get("emergency:social_facility")
+            == "shelter"
+            or tags.get("social_facility")
+            == "shelter"
+            or tags.get("emergency:shelter")
+            == "yes"
+            or tags.get("evacuation_center")
+            == "yes"
+        ):
+            shelter_type = "Emergency Shelter"
+            verification = "OSM_EMERGENCY_SHELTER"
+            priority = 1
+
+        elif tags.get("emergency") == "disaster_help_point":
+            shelter_type = "Disaster Help Point"
+            verification = "OSM_DISASTER_HELP_POINT"
+            priority = 2
+
+        elif tags.get("emergency") == "assembly_point":
+            shelter_type = "Emergency Assembly Point"
+            verification = "OSM_ASSEMBLY_POINT"
+            priority = 3
+
+        elif tags.get("amenity") == "shelter":
+            shelter_type = "Mapped Shelter"
+            verification = "OSM_GENERAL_SHELTER"
+            priority = 4
+
+        else:
+            continue
+
+        # -----------------------------------------
+        # Name
+        # -----------------------------------------
+
+        name = (
+            tags.get("name")
+            or tags.get("name:en")
+            or shelter_type
+        )
+
+        # -----------------------------------------
+        # Address
+        # -----------------------------------------
+
+        address_parts = [
+            tags.get("addr:housenumber"),
+            tags.get("addr:street"),
+            tags.get("addr:suburb"),
+            tags.get("addr:village"),
+            tags.get("addr:town"),
+            tags.get("addr:city"),
+            tags.get("addr:district"),
+            tags.get("addr:state"),
+        ]
+
+        address = ", ".join(
+            part
+            for part in address_parts
+            if part
+        )
+
+        # -----------------------------------------
+        # Capacity
+        # -----------------------------------------
+
+        capacity = _safe_int(
+            tags.get("capacity"),
+            0,
+        )
+
+        shelters.append({
+            "id": f"osm_{element_id}",
+            "name": name,
+            "location": (
+                address
+                or "OpenStreetMap location"
+            ),
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "capacity": capacity,
+            "isHighGround": False,
+
+            "source": "OpenStreetMap",
+
+            "verification": verification,
+
+            "shelterType": shelter_type,
+
+            "osmType": element.get("type"),
+            "osmId": element.get("id"),
+
+            "operator": tags.get("operator"),
+            "phone": tags.get("phone"),
+            "website": tags.get("website"),
+
+            "priority": priority,
+        })
+
+    # Emergency shelters first.
+    # Then disaster help points.
+    # Then assembly points.
+    # Then general shelters.
+    shelters.sort(
+        key=lambda shelter: shelter["priority"]
+    )
+
+    return {
+        "success": True,
+        "count": len(shelters),
+        "radius": radius,
+        "shelters": shelters,
+    }
+@app.get("/emergency-facilities")
+def get_emergency_facilities(
+    lat: float,
+    lon: float,
+    radius: int = 50000,
+):
+    """
+    Find nearby emergency-support facilities.
+
+    These are NOT classified as shelters.
+    They are fallback emergency-support locations.
+    """
+
+    query = f"""
+    [out:json][timeout:60];
+
+    (
+      nwr[
+        "amenity"="hospital"
+      ](around:{radius},{lat},{lon});
+
+      nwr[
+        "healthcare"="hospital"
+      ](around:{radius},{lat},{lon});
+
+      nwr[
+        "amenity"="police"
+      ](around:{radius},{lat},{lon});
+
+      nwr[
+        "amenity"="fire_station"
+      ](around:{radius},{lat},{lon});
+
+      nwr[
+        "emergency"="ambulance_station"
+      ](around:{radius},{lat},{lon});
+    );
+
+    out center tags;
+    """
+
+    encoded_query = urllib.parse.urlencode(
+        {"data": query}
+    ).encode("utf-8")
+
+    urls = [
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+        "https://z.overpass-api.de/api/interpreter",
+    ]
+
+    last_error = None
+    data = None
+
+    for url in urls:
+        try:
+            data = _overpass_post_ipv4(
+                url,
+                encoded_query,
+            )
+            break
+        except Exception as e:
+            last_error = str(e)
+
+    if data is None:
+        return {
+            "success": False,
+            "error": last_error or "All facility providers failed",
+            "facilities": [],
+        }
+
+    facilities = []
+    seen_ids = set()
+
+    for element in data.get("elements", []):
+        tags = element.get("tags", {})
+
+        element_id = (
+            f"{element.get('type')}_{element.get('id')}"
+        )
+
+        if element_id in seen_ids:
+            continue
+
+        seen_ids.add(element_id)
 
         latitude = element.get("lat")
         longitude = element.get("lon")
@@ -285,16 +551,43 @@ def get_shelters(
         if latitude is None or longitude is None:
             continue
 
+        # -----------------------------------------
+        # Classify facility
+        # -----------------------------------------
+
+        if (
+            tags.get("amenity") == "hospital"
+            or tags.get("healthcare") == "hospital"
+        ):
+            facility_type = "Hospital"
+
+        elif tags.get("amenity") == "police":
+            facility_type = "Police Station"
+
+        elif tags.get("amenity") == "fire_station":
+            facility_type = "Fire Station"
+
+        elif tags.get("emergency") == "ambulance_station":
+            facility_type = "Ambulance Station"
+
+        else:
+            continue
+
         name = (
             tags.get("name")
             or tags.get("name:en")
-            or "Emergency Shelter"
+            or facility_type
         )
 
         address_parts = [
             tags.get("addr:housenumber"),
             tags.get("addr:street"),
+            tags.get("addr:suburb"),
+            tags.get("addr:village"),
+            tags.get("addr:town"),
             tags.get("addr:city"),
+            tags.get("addr:district"),
+            tags.get("addr:state"),
         ]
 
         address = ", ".join(
@@ -303,40 +596,29 @@ def get_shelters(
             if part
         )
 
-        shelters.append(
-            {
-                "id": (
-                    f"osm_{element.get('type')}_"
-                    f"{element.get('id')}"
-                ),
-                "name": name,
-                "location": (
-                    address
-                    or "OpenStreetMap location"
-                ),
-                "latitude": float(latitude),
-                "longitude": float(longitude),
-                "capacity": _safe_int(
-                    tags.get("capacity"),
-                    0,
-                ),
-                "isHighGround": False,
-                "source": "OpenStreetMap",
-                "osmType": element.get("type"),
-                "osmId": element.get("id"),
-                "operator": tags.get("operator"),
-                "phone": tags.get("phone"),
-                "website": tags.get("website"),
-            }
-        )
+        facilities.append({
+            "id": f"osm_{element_id}",
+            "name": name,
+            "type": facility_type,
+            "location": (
+                address
+                or "OpenStreetMap location"
+            ),
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "phone": tags.get("phone"),
+            "website": tags.get("website"),
+            "operator": tags.get("operator"),
+            "emergency": tags.get("emergency"),
+            "source": "OpenStreetMap",
+        })
 
     return {
         "success": True,
-        "count": len(shelters),
+        "count": len(facilities),
         "radius": radius,
-        "shelters": shelters,
+        "facilities": facilities,
     }
-
 
 def _safe_int(
     value,
