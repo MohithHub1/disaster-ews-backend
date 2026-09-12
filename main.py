@@ -208,7 +208,40 @@ def _overpass_post_ipv4(
 # ============================================================
 # GET ASSESSMENTS
 # ============================================================
+@app.get("/assessments")
+def get_assessments(
+    db: Session = Depends(get_db),
+):
+    assessments = (
+        db.query(Assessment)
+        .order_by(Assessment.created_at.desc())
+        .all()
+    )
 
+    return [
+        {
+            "id": assessment.id,
+            "location": assessment.location,
+            "rainfall": assessment.rainfall,
+            "risk_level": assessment.risk_level,
+            "overall_risk": assessment.overall_risk,
+            "flood_risk": assessment.flood_risk,
+            "landslide_risk": assessment.landslide_risk,
+            "lead_time_minutes": assessment.lead_time_minutes,
+            "recommended_action": assessment.recommended_action,
+            "soil_moisture": assessment.soil_moisture,
+            "water_level": assessment.water_level,
+            "temperature": assessment.temperature,
+            "humidity": assessment.humidity,
+            "wind_speed": assessment.wind_speed,
+            "slope": assessment.slope,
+            "historical_disaster": assessment.historical_disaster,
+            "created_at": assessment.created_at.isoformat()
+            if assessment.created_at
+            else None,
+        }
+        for assessment in assessments
+    ]
 @app.get("/shelters")
 def get_shelters(
     lat: float,
