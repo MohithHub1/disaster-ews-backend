@@ -216,68 +216,34 @@ def get_shelters(
     radius: int = 50000,
 ):
     """
-    Find emergency shelters / evacuation points near a location.
+    Find designated emergency shelters / evacuation centres
+    near a location.
 
-    Sources:
-    - OSM designated shelters
-    - OSM emergency assembly points
-    - OSM disaster help points
-    - OSM evacuation centres
-
-    Designed for India-wide operation.
+    Only explicit emergency shelter classifications are used.
+    General OSM shelters and assembly points are excluded.
     """
 
     query = f"""
-    [out:json][timeout:60];
+[out:json][timeout:60];
 
-    (
-      /*
-       * Official/designated emergency shelters
-       */
-      nwr[
-        "emergency:social_facility"="shelter"
-      ](around:{radius},{lat},{lon});
+(
+  nwr[
+    "emergency:social_facility"="shelter"
+  ](around:{radius},{lat},{lon});
 
-      nwr[
-        "social_facility"="shelter"
-      ](around:{radius},{lat},{lon});
+  nwr[
+    "amenity"="social_facility"
+  ][
+    "social_facility"="shelter"
+  ](around:{radius},{lat},{lon});
 
-      nwr[
-        "emergency:shelter"="yes"
-      ](around:{radius},{lat},{lon});
+  nwr[
+    "evacuation_center"="yes"
+  ](around:{radius},{lat},{lon});
+);
 
-      nwr[
-        "evacuation_center"="yes"
-      ](around:{radius},{lat},{lon});
-
-      /*
-       * Emergency assembly locations
-       */
-      nwr[
-        "emergency"="assembly_point"
-      ](around:{radius},{lat},{lon});
-
-      /*
-       * Disaster help points
-       */
-      nwr[
-        "emergency"="disaster_help_point"
-      ](around:{radius},{lat},{lon});
-
-      /*
-       * General mapped shelters
-       *
-       * Public transport shelters are excluded.
-       */
-      nwr[
-        "amenity"="shelter"
-      ](
-        around:{radius},{lat},{lon}
-      )["shelter_type"!="public_transport"];
-    );
-
-    out center tags;
-    """
+out center tags;
+"""
 
     encoded_query = urllib.parse.urlencode(
         {"data": query}
@@ -329,7 +295,6 @@ def get_shelters(
 
         if latitude is None or longitude is None:
             center = element.get("center", {})
-
             latitude = center.get("lat")
             longitude = center.get("lon")
 
@@ -337,37 +302,32 @@ def get_shelters(
             continue
 
         # -----------------------------------------
-        # Determine emergency classification
+        # Classify verified emergency shelter
         # -----------------------------------------
 
         if (
             tags.get("emergency:social_facility")
             == "shelter"
-            or tags.get("social_facility")
-            == "shelter"
-            or tags.get("emergency:shelter")
-            == "yes"
-            or tags.get("evacuation_center")
-            == "yes"
         ):
             shelter_type = "Emergency Shelter"
             verification = "OSM_EMERGENCY_SHELTER"
             priority = 1
 
-        elif tags.get("emergency") == "disaster_help_point":
-            shelter_type = "Disaster Help Point"
-            verification = "OSM_DISASTER_HELP_POINT"
-            priority = 2
+        elif (
+            tags.get("social_facility")
+            == "shelter"
+        ):
+            shelter_type = "Emergency Shelter"
+            verification = "OSM_SOCIAL_SHELTER"
+            priority = 1
 
-        elif tags.get("emergency") == "assembly_point":
-            shelter_type = "Emergency Assembly Point"
-            verification = "OSM_ASSEMBLY_POINT"
-            priority = 3
-
-        elif tags.get("amenity") == "shelter":
-            shelter_type = "Mapped Shelter"
-            verification = "OSM_GENERAL_SHELTER"
-            priority = 4
+        elif (
+            tags.get("evacuation_center")
+            == "yes"
+        ):
+            shelter_type = "Evacuation Centre"
+            verification = "OSM_EVACUATION_CENTRE"
+            priority = 1
 
         else:
             continue
@@ -423,27 +383,17 @@ def get_shelters(
             "longitude": float(longitude),
             "capacity": capacity,
             "isHighGround": False,
-
             "source": "OpenStreetMap",
-
             "verification": verification,
-
             "shelterType": shelter_type,
-
             "osmType": element.get("type"),
             "osmId": element.get("id"),
-
             "operator": tags.get("operator"),
             "phone": tags.get("phone"),
             "website": tags.get("website"),
-
             "priority": priority,
         })
 
-    # Emergency shelters first.
-    # Then disaster help points.
-    # Then assembly points.
-    # Then general shelters.
     shelters.sort(
         key=lambda shelter: shelter["priority"]
     )
