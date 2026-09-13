@@ -5,12 +5,14 @@ import http.client
 import socket
 import ssl
 
+from pydantic import BaseModel
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from database import Base, engine, SessionLocal
+from ml_predictor import predict_flood
 from models import Assessment
 from schemas import AssessmentCreate
 
@@ -130,6 +132,71 @@ def create_assessment(
         "message": "Assessment stored successfully",
         "id": new_assessment.id,
     }
+class FloodPredictionRequest(BaseModel):
+    # Admin Input values
+    location: str = ""
+    rainfall: float = 0.0
+    soil_moisture: float = 0.0
+    water_level: float = 0.0
+    slope_stability: float = 0.0
+    historical_risk: float = 0.0
+    temperature: float = 0.0
+    humidity: float = 0.0
+    wind_speed: float = 0.0
+
+    # Direct ML features
+    precipitation: float = 0.0
+    antecedent_precip_index: float = 0.0
+    avg_soil_moisture: float = 0.0
+    river_water_level_cm: float = 0.0
+    elevation_m: float = 0.0
+    slope_deg: float = 0.0
+    twi_index: float = 0.0
+    temperature_2m: float = 0.0
+    relative_humidity_2m: float = 0.0
+    surface_pressure: float = 0.0
+    wind_speed_10m: float = 0.0
+
+@app.post('/predict')
+def predict(request: FloodPredictionRequest):
+    data = request.model_dump()
+
+    # Convert Admin Input values to the units expected by the ML model.
+    if data["precipitation"] == 0.0:
+        data["precipitation"] = data["rainfall"]
+
+    if data["avg_soil_moisture"] == 0.0:
+        data["avg_soil_moisture"] = data["soil_moisture"] / 100.0
+
+    if data["river_water_level_cm"] == 0.0:
+        data["river_water_level_cm"] = data["water_level"] * 100.0
+
+    if data["temperature_2m"] == 0.0:
+        data["temperature_2m"] = data["temperature"]
+
+    if data["relative_humidity_2m"] == 0.0:
+        data["relative_humidity_2m"] = data["humidity"]
+
+    if data["wind_speed_10m"] == 0.0:
+        data["wind_speed_10m"] = data["wind_speed"] / 3.6
+
+    # Missing location-derived ML features currently use neutral defaults.
+    if data["antecedent_precip_index"] == 0.0:
+        data["antecedent_precip_index"] = data["rainfall"]
+
+    if data["elevation_m"] == 0.0:
+        data["elevation_m"] = 0.0
+
+    if data["slope_deg"] == 0.0:
+        data["slope_deg"] = 0.0
+
+    if data["twi_index"] == 0.0:
+        data["twi_index"] = 0.0
+
+    if data["surface_pressure"] == 0.0:
+        data["surface_pressure"] = 1013.25
+
+    return predict_flood(data)
 
 def _overpass_post_ipv4(
     url: str,
