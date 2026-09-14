@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 from database import Base, engine, SessionLocal
 from ml_predictor import predict_flood
+from landslide_ml_predictor import predict_landslide
 from models import Assessment
 from schemas import AssessmentCreate
 
@@ -161,7 +162,7 @@ class FloodPredictionRequest(BaseModel):
 def predict(request: FloodPredictionRequest):
     data = request.model_dump()
 
-    # Convert Admin Input values to the units expected by the ML model.
+    # Convert Admin Input values to the units expected by the flood ML model.
     if data["precipitation"] == 0.0:
         data["precipitation"] = data["rainfall"]
 
@@ -180,7 +181,6 @@ def predict(request: FloodPredictionRequest):
     if data["wind_speed_10m"] == 0.0:
         data["wind_speed_10m"] = data["wind_speed"] / 3.6
 
-    # Missing location-derived ML features currently use neutral defaults.
     if data["antecedent_precip_index"] == 0.0:
         data["antecedent_precip_index"] = data["rainfall"]
 
@@ -196,7 +196,28 @@ def predict(request: FloodPredictionRequest):
     if data["surface_pressure"] == 0.0:
         data["surface_pressure"] = 1013.25
 
-    return predict_flood(data)
+    # Run flood ML model.
+    flood_result = predict_flood(data)
+
+    # Run landslide ML model.
+    landslide_data = {
+        "Rainfall_mm": data["rainfall"],
+        "Slope_Angle": 0.0,
+        "Soil_Saturation": data["avg_soil_moisture"],
+        "Vegetation_Cover": 0.0,
+        "Earthquake_Activity": 0.0,
+        "Proximity_to_Water": 0.0,
+        "Soil_Type_Gravel": 0.0,
+        "Soil_Type_Sand": 0.0,
+        "Soil_Type_Silt": 0.0,
+    }
+
+    landslide_result = predict_landslide(landslide_data)
+
+    return {
+        **flood_result,
+        **landslide_result,
+    }
 
 def _overpass_post_ipv4(
     url: str,
