@@ -1,5 +1,6 @@
-from sqlalchemy import Column, DateTime, Float, Integer, String
 from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Float, Integer, String
 
 from database import Base
 
@@ -27,4 +28,30 @@ class Assessment(Base):
     slope = Column(Float, nullable=False)
     historical_disaster = Column(Float, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class FcmToken(Base):
+    __tablename__ = "fcm_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    token = Column(String, nullable=False, unique=True, index=True)
+    location = Column(String, nullable=False)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )

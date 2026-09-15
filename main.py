@@ -19,9 +19,10 @@ from vegetation_service import get_vegetation_cover
 from earthquake_service import get_earthquake_activity
 from water_proximity_service import get_water_proximity
 from historical_disaster_service import get_historical_disaster_risk
-from models import Assessment
+from models import Assessment, FcmToken
 from schemas import AssessmentCreate
 from water_level_service import get_water_level
+from datetime import datetime
 
 
 # ============================================================
@@ -140,11 +141,42 @@ def create_assessment(
         "id": new_assessment.id,
     }
 @app.post("/fcm/register")
-def register_fcm_token(request: dict):
+def register_fcm_token(
+    request: dict,
+    db: Session = Depends(get_db),
+):
+    token = str(request.get("token") or "").strip()
+    location = str(request.get("location") or "").strip()
+
+    if not token or not location:
+        return {
+            "message": "FCM token and location are required",
+            "registered": False,
+        }
+
+    existing = (
+        db.query(FcmToken)
+        .filter(FcmToken.token == token)
+        .first()
+    )
+
+    if existing:
+        existing.location = location
+        existing.updated_at = datetime.utcnow()
+    else:
+        db.add(
+            FcmToken(
+                token=token,
+                location=location,
+            )
+        )
+
+    db.commit()
+
     return {
         "message": "FCM token registered successfully",
-        "token": request.get("token"),
-        "location": request.get("location"),
+        "location": location,
+        "registered": True,
     }
 class FloodPredictionRequest(BaseModel):
     # Admin Input values
