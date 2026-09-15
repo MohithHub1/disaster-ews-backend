@@ -139,19 +139,12 @@ def create_assessment(
         "message": "Assessment stored successfully",
         "id": new_assessment.id,
     }
-    class FcmTokenRequest(BaseModel):
-      token: str
-    location: str
-
-
-@app.post("/fcm/register")
-def register_fcm_token(
-    request: FcmTokenRequest,
-):
+  @app.post("/fcm/register")
+def register_fcm_token(request: dict):
     return {
         "message": "FCM token registered successfully",
-        "token": request.token,
-        "location": request.location,
+        "token": request.get("token"),
+        "location": request.get("location"),
     }
 class FloodPredictionRequest(BaseModel):
     # Admin Input values
