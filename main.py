@@ -139,7 +139,7 @@ def create_assessment(
         "message": "Assessment stored successfully",
         "id": new_assessment.id,
     }
-  @app.post("/fcm/register")
+@app.post("/fcm/register")
 def register_fcm_token(request: dict):
     return {
         "message": "FCM token registered successfully",
