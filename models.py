@@ -55,18 +55,34 @@ class FcmToken(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
-    class AlertState(Base):
-       __tablename__ = "alert_states"
+
+
+class AlertState(Base):
+    __tablename__ = "alert_states"
 
     id = Column(Integer, primary_key=True, index=True)
+
     token = Column(String, nullable=False, unique=True, index=True)
     location = Column(String, nullable=False)
 
-    current_level = Column(String, nullable=False, default="NORMAL")
-    previous_level = Column(String, nullable=False, default="NORMAL")
+    current_level = Column(
+        String,
+        nullable=False,
+        default="NORMAL",
+    )
+
+    previous_level = Column(
+        String,
+        nullable=False,
+        default="NORMAL",
+    )
 
     last_risk = Column(Float, nullable=True)
-    last_notified_at = Column(DateTime, nullable=True)
+
+    last_notified_at = Column(
+        DateTime,
+        nullable=True,
+    )
 
     updated_at = Column(
         DateTime,
