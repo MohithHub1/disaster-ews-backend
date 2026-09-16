@@ -22,7 +22,7 @@ from vegetation_service import get_vegetation_cover
 from earthquake_service import get_earthquake_activity
 from water_proximity_service import get_water_proximity
 from historical_disaster_service import get_historical_disaster_risk
-from models import Assessment, FcmToken
+from models import Assessment, FcmToken, AlertState
 from schemas import AssessmentCreate
 from water_level_service import get_water_level
 from datetime import datetime
