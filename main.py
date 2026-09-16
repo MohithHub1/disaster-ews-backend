@@ -6,8 +6,8 @@ import socket
 import ssl
 import os
 import firebase_admin
-from firebase_admin import credentials
 
+from firebase_admin import credentials, messaging
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -81,6 +81,32 @@ if firebase_service_account:
         print("FIREBASE ADMIN SDK ERROR:", e)
 else:
     print("FIREBASE_SERVICE_ACCOUNT_JSON NOT SET")
+def send_fcm_notification(token: str, title: str, body: str):
+    try:
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+            ),
+            token=token,
+        )
+
+        response = messaging.send(message)
+
+        print("FCM NOTIFICATION SENT:", response)
+
+        return {
+            "success": True,
+            "message_id": response,
+        }
+
+    except Exception as e:
+        print("FCM NOTIFICATION ERROR:", e)
+
+        return {
+            "success": False,
+            "error": str(e),
+        }
 app = FastAPI(
     title="Disaster Early Warning System"
 )
@@ -121,8 +147,21 @@ def root():
     return {
         "message": "Disaster EWS backend is running"
     }
+@app.post("/test-fcm")
+def test_fcm(request: dict):
+    token = str(request.get("token") or "").strip()
 
+    if not token:
+        return {
+            "success": False,
+            "message": "FCM token is required",
+        }
 
+    return send_fcm_notification(
+        token=token,
+        title="Disaster EWS Test Alert",
+        body="Firebase Cloud Messaging is working successfully.",
+    )
 # ============================================================
 # CREATE ASSESSMENT
 # ============================================================
