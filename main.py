@@ -4,6 +4,9 @@ import urllib.request
 import http.client
 import socket
 import ssl
+import os
+import firebase_admin
+from firebase_admin import credentials
 
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends
@@ -62,7 +65,22 @@ with engine.connect() as conn:
 # ============================================================
 # FASTAPI APP
 # ============================================================
+# Firebase Admin SDK
+firebase_service_account = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
 
+if firebase_service_account:
+    try:
+        service_account_info = json.loads(firebase_service_account)
+
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(service_account_info)
+            firebase_admin.initialize_app(cred)
+
+        print("FIREBASE ADMIN SDK INITIALIZED")
+    except Exception as e:
+        print("FIREBASE ADMIN SDK ERROR:", e)
+else:
+    print("FIREBASE_SERVICE_ACCOUNT_JSON NOT SET")
 app = FastAPI(
     title="Disaster Early Warning System"
 )
